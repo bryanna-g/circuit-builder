@@ -5,21 +5,30 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>AgroVoltaics: Pro Battery Field</title>
     <style>
-        :root { --sun: #fbbf24; --panel: #1e3a8a; --bg-sky: #7dd3fc; }
+        :root { --sun: #fbbf24; --panel: #1e3a8a; }
         body { margin: 0; font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; height: 100vh; overflow: hidden; color: white; transition: background 1s; }
         
         .overlay { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(15px); display: flex; align-items: center; justify-content: center; z-index: 100; text-align: center; }
         .modal { background: rgba(255,255,255,0.05); padding: 30px; border-radius: 25px; border: 1px solid rgba(255,255,255,0.1); width: 90%; max-width: 400px; }
         
+        #victoryMsg { 
+            position: fixed; inset: 0; display: none; align-items: center; justify-content: center; 
+            z-index: 200; background: rgba(0,0,0,0.4); pointer-events: none;
+        }
+        #victoryMsg h1 { 
+            font-size: 3rem; color: white; text-transform: uppercase; letter-spacing: 4px; 
+            text-shadow: 0 0 20px rgba(255,255,255,0.8); text-align: center;
+        }
+
+        .intro-box { margin-bottom: 25px; font-size: 0.9rem; line-height: 1.5; color: #cbd5e1; }
         .selection-group { margin: 20px 0; display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
         .chip { padding: 10px 15px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.3); cursor: pointer; font-size: 0.8rem; transition: 0.3s; }
         .chip.active { background: var(--sun); color: #92400e; border-color: var(--sun); font-weight: bold; }
 
         .btn { background: #22c55e; color: white; border: none; padding: 15px 40px; border-radius: 50px; font-weight: bold; cursor: pointer; margin-top: 20px; width: 100%; }
         
-        /* HUD and Battery Styling */
         .hud { position: absolute; top: 25px; width: 100%; display: flex; justify-content: space-around; align-items: center; z-index: 10; pointer-events: none; }
-        .stat { background: rgba(255, 255, 255, 0.15); backdrop-filter: blur(12px); padding: 12px 20px; border-radius: 15px; text-align: center; min-width: 90px; border: 1px solid rgba(255,255,255,0.1); }
+        .stat { background: rgba(255, 255, 255, 0.15); backdrop-filter: blur(12px); padding: 12px 20px; border-radius: 15px; text-align: center; min-width: 100px; border: 1px solid rgba(255,255,255,0.1); }
         .label { font-size: 0.6rem; opacity: 0.8; display: block; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
         .val { font-size: 1.1rem; font-weight: 800; }
 
@@ -34,6 +43,9 @@
 <div id="setupScreen" class="overlay">
     <div class="modal">
         <h2 style="margin-top:0">🚜 Farm Setup</h2>
+        <div class="intro-box">
+            <p>Agrovoltaics integrates solar power and agriculture on the same land.</p>
+        </div>
         <label class="label">Choose Climate</label>
         <div class="selection-group" id="climateGroup">
             <div class="chip active" onclick="setClimate('desert', this)">🌵 Desert</div>
@@ -50,16 +62,15 @@
     </div>
 </div>
 
+<div id="victoryMsg"><h1>Battery Storage Full<br>for the Day!</h1></div>
+
 <div class="hud">
     <div class="stat"><span class="label">⚡ Power</span><span id="pwr" class="val">0kW</span></div>
-    
     <div class="battery-box">
-        <div class="battery-shell">
-            <div id="batFill" class="battery-fill"></div>
-        </div>
+        <div class="battery-shell"><div id="batFill" class="battery-fill"></div></div>
         <span class="label" style="opacity: 1">Energy Storage</span>
     </div>
-
+    <div class="stat"><span class="label">🕒 Time of Day</span><span id="farmTime" class="val">08:00 AM</span></div>
     <div class="stat"><span class="label">🌱 Health</span><span id="hlth" class="val">100%</span></div>
 </div>
 
@@ -68,30 +79,39 @@
 <script>
 const canvas = document.getElementById('stage');
 const ctx = canvas.getContext('2d');
-let w, h, active = false;
+let w, h, active = false, gameOver = false;
 
-let gameConfig = {
-    climate: 'desert',
-    crop: 'lettuce',
-    sunSpeed: 7000,
-    heatDamage: 0.08,
-    stormFreq: 0.7
+let tilt = 0, sunPos = 0, energy = 0;
+let gameSecondsElapsed = 0;
+let lastTimeUpdate = 0;
+const TOTAL_GAME_SECONDS = 240; // 4 minutes
+const ENERGY_GOAL = 500;
+
+// Default colors (Desert)
+let currentClimate = 'desert';
+let colors = {
+    sky: '#bae6fd',
+    ground: '#556b2f' // Dark Olive Green
 };
 
-let tilt = 0, sunPos = 0, energy = 0, health = 100, weatherMult = 1.0;
-const ENERGY_GOAL = 500; // Goal to fill the battery
-
 function setClimate(type, el) {
-    gameConfig.climate = type;
+    currentClimate = type;
     document.querySelectorAll('#climateGroup .chip').forEach(c => c.classList.remove('active'));
     el.classList.add('active');
-    if(type === 'desert') { gameConfig.sunSpeed = 5000; gameConfig.heatDamage = 0.12; }
-    if(type === 'temperate') { gameConfig.sunSpeed = 8000; gameConfig.heatDamage = 0.05; }
-    if(type === 'tropical') { gameConfig.sunSpeed = 10000; gameConfig.heatDamage = 0.03; }
+    
+    if(type === 'desert') {
+        colors.sky = '#bae6fd';
+        colors.ground = '#556b2f'; // Dark Olive Green
+    } else if(type === 'temperate') {
+        colors.sky = '#7dd3fc';
+        colors.ground = '#22c55e'; // Bright Green
+    } else {
+        colors.sky = '#38bdf8';
+        colors.ground = '#15803d'; // Deep Jungle Green
+    }
 }
 
 function setCrop(type, el) {
-    gameConfig.crop = type;
     document.querySelectorAll('#cropGroup .chip').forEach(c => c.classList.remove('active'));
     el.classList.add('active');
 }
@@ -102,99 +122,89 @@ resize();
 
 async function startGame() {
     document.getElementById('setupScreen').style.display = 'none';
-    if (typeof DeviceOrientationEvent !== 'undefined' && DeviceOrientationEvent.requestPermission) {
-        try { await DeviceOrientationEvent.requestPermission(); } catch(e){}
-    }
     window.addEventListener('deviceorientation', (e) => { tilt = Math.max(-45, Math.min(45, e.gamma || 0)); });
     window.addEventListener('mousemove', (e) => { if (!('ontouchstart' in window)) tilt = ((e.clientX / w) - 0.5) * 80; });
-    
-    const block = () => { weatherMult = 0.2; };
-    const release = () => { weatherMult = 1.0; };
-    window.addEventListener('mousedown', block); window.addEventListener('mouseup', release);
-    window.addEventListener('touchstart', block); window.addEventListener('touchend', release);
-
     active = true;
+    lastTimeUpdate = Date.now();
     requestAnimationFrame(loop);
 }
 
+function updateFarmClock() {
+    if(gameOver) return;
+    let now = Date.now();
+    if (now - lastTimeUpdate >= 1000) {
+        gameSecondsElapsed++;
+        lastTimeUpdate = now;
+        let totalMinutesInDay = 600; 
+        let currentFarmMinutes = (gameSecondsElapsed / TOTAL_GAME_SECONDS) * totalMinutesInDay;
+        let hour = 8 + Math.floor(currentFarmMinutes / 60);
+        let minute = Math.floor(currentFarmMinutes % 60);
+        let ampm = hour >= 12 ? 'PM' : 'AM';
+        let displayHour = hour > 12 ? hour - 12 : hour;
+        document.getElementById('farmTime').innerText = `${displayHour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')} ${ampm}`;
+    }
+}
+
 function drawSun() {
-    const x = (w / 2) + (Math.sin(Date.now() / gameConfig.sunSpeed) * (w * 0.4));
-    const y = h * 0.18;
-    sunPos = (x / w - 0.5) * 90;
+    let progress = gameSecondsElapsed / TOTAL_GAME_SECONDS;
+    const x = (w * 0.1) + (progress * (w * 0.8));
+    const y = (h * 0.25) - (Math.sin(progress * Math.PI) * 100);
+    sunPos = (progress - 0.5) * 90;
 
     const grad = ctx.createRadialGradient(x, y, 10, x, y, 50);
     grad.addColorStop(0, '#fff');
     grad.addColorStop(0.4, '#fbbf24');
     grad.addColorStop(1, 'transparent');
-    
     ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.arc(x, y, 60, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.beginPath(); ctx.arc(x, y, 60, 0, Math.PI * 2); ctx.fill();
 }
 
 function loop() {
     if(!active) return;
     ctx.clearRect(0,0,w,h);
-    
-    // Background and Environment
-    let skyColor = weatherMult < 0.5 ? '#1e293b' : (gameConfig.climate === 'desert' ? '#bae6fd' : '#7dd3fc');
-    let groundColor = weatherMult < 0.5 ? '#334155' : (gameConfig.climate === 'desert' ? '#fbbf24' : '#22c55e');
-    
-    document.body.style.background = skyColor;
-    ctx.fillStyle = groundColor;
+    updateFarmClock();
+
+    // Climate-specific background colors
+    document.body.style.background = colors.sky;
+    ctx.fillStyle = colors.sky;
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = colors.ground;
     ctx.fillRect(0, h * 0.45, w, h);
 
     drawSun();
 
-    // Game Logic
-    let alignment = Math.abs(tilt - sunPos);
-    energy += Math.max(0, Math.cos(alignment * Math.PI / 180)) * weatherMult * 0.2;
-    
-    let target = (gameConfig.crop === 'lettuce') ? 30 : (gameConfig.crop === 'tomato' ? 15 : 5);
-    let error = Math.abs(alignment - target);
-    health -= (error > 15 && weatherMult > 0.5) ? gameConfig.heatDamage : -0.02;
-    health = Math.max(0, Math.min(100, health));
+    if(!gameOver) {
+        let alignment = Math.abs(tilt - sunPos);
+        energy += Math.max(0, Math.cos(alignment * Math.PI / 180)) * 0.2;
+        
+        let chargePercent = Math.min(100, (energy / ENERGY_GOAL) * 100);
+        document.getElementById('pwr').innerText = Math.floor(energy) + "kW";
+        document.getElementById('batFill').style.height = chargePercent + "%";
+        document.getElementById('hlth').innerText = "100%";
 
-    // Update HUD
-    let chargePercent = Math.min(100, (energy / ENERGY_GOAL) * 100);
-    document.getElementById('pwr').innerText = Math.floor(energy) + "kW";
-    document.getElementById('hlth').innerText = Math.floor(health) + "%";
-    document.getElementById('batFill').style.height = chargePercent + "%";
+        if(energy >= ENERGY_GOAL) {
+            gameOver = true;
+            document.getElementById('victoryMsg').style.display = 'flex';
+            setTimeout(() => location.reload(), 5000);
+        }
+        if(gameSecondsElapsed >= TOTAL_GAME_SECONDS) {
+            alert("End of day! Final Charge: " + Math.floor(chargePercent) + "%");
+            location.reload();
+        }
+    }
 
-    // Draw Panels
-    const panelW = 75;
-    const panelH = 45;
-    const colSpacing = w / 3.5;
-    const rowSpacing = 110;
-
+    const panelW = 75, panelH = 45, colSpacing = w / 3.5, rowSpacing = 110;
     for(let i=0; i<3; i++) {
         for(let j=0; j<3; j++) {
             let x = (colSpacing * (i + 0.75)) - (panelW / 2);
             let y = (h * 0.5) + (j * rowSpacing);
             let skew = (tilt / 45) * 20;
-
-            ctx.fillStyle = 'rgba(0,0,0,0.15)';
-            ctx.beginPath();
-            ctx.moveTo(x-skew+8, y+8); ctx.lineTo(x+panelW-skew+8, y+8);
-            ctx.lineTo(x+panelW+skew+8, y+panelH+8); ctx.lineTo(x+skew+8, y+panelH+8);
-            ctx.fill();
-
-            ctx.fillStyle = '#1e40af';
-            ctx.strokeStyle = '#60a5fa';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(x-skew, y); ctx.lineTo(x+panelW-skew, y);
-            ctx.lineTo(x+panelW+skew, y+panelH); ctx.lineTo(x+skew, y+panelH);
-            ctx.closePath();
-            ctx.fill();
-            ctx.stroke();
+            ctx.fillStyle = 'rgba(0,0,0,0.1)';
+            ctx.beginPath(); ctx.moveTo(x-skew+8, y+8); ctx.lineTo(x+panelW-skew+8, y+8); ctx.lineTo(x+panelW+skew+8, y+panelH+8); ctx.lineTo(x+skew+8, y+panelH+8); ctx.fill();
+            ctx.fillStyle = '#1e40af'; ctx.strokeStyle = '#60a5fa'; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.moveTo(x-skew, y); ctx.lineTo(x+panelW-skew, y); ctx.lineTo(x+panelW+skew, y+panelH); ctx.lineTo(x+skew, y+panelH); ctx.closePath(); ctx.fill(); ctx.stroke();
         }
     }
-
-    if(health <= 0) { alert("Crops failed! The battery was only " + Math.floor(chargePercent) + "% full."); location.reload(); }
-    if(energy >= ENERGY_GOAL) { alert("Battery Storage Full! Mission Success!"); location.reload(); }
-    
     requestAnimationFrame(loop);
 }
 </script>
