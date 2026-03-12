@@ -121,9 +121,39 @@ window.addEventListener('resize', resize);
 resize();
 
 async function startGame() {
+    // 1. Request Permission for Mobile Sensors (Required for iOS/Android)
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        try {
+            const permissionState = await DeviceOrientationEvent.requestPermission();
+            if (permissionState !== 'granted') {
+                console.log("Motion sensors denied. Falling back to mouse/touch.");
+            }
+        } catch (e) {
+            console.error("Sensor request failed:", e);
+        }
+    }
+
+    // 2. Hide the setup screen
     document.getElementById('setupScreen').style.display = 'none';
-    window.addEventListener('deviceorientation', (e) => { tilt = Math.max(-45, Math.min(45, e.gamma || 0)); });
-    window.addEventListener('mousemove', (e) => { if (!('ontouchstart' in window)) tilt = ((e.clientX / w) - 0.5) * 80; });
+
+    // 3. Setup Tilt Controls (Mobile Gyroscope)
+    window.addEventListener('deviceorientation', (e) => { 
+        // e.gamma is the left-to-right tilt of the phone
+        if (e.gamma !== null) {
+            // We map the tilt to our -45 to 45 degree range
+            tilt = Math.max(-45, Math.min(45, e.gamma)); 
+        }
+    });
+
+    // 4. Setup Mouse/Touch Controls (Desktop/Manual Fallback)
+    window.addEventListener('mousemove', (e) => { 
+        // Only use mouse if it's not a touch device
+        if (!('ontouchstart' in window)) {
+            tilt = ((e.clientX / w) - 0.5) * 80; 
+        }
+    });
+
+    // 5. Start the game loop
     active = true;
     lastTimeUpdate = Date.now();
     requestAnimationFrame(loop);
